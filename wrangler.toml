@@ -1,19 +1,28 @@
 # Настройки деплоя для worker.js (Cloudflare Workers)
-# ИСПРАВЛЕНО: имя совпадает с реальным воркером на Cloudflare (см. build-лог),
-# иначе секреты BOT_TOKEN и WEBHOOK_SECRET уходят на несуществующий воркер.
 name = "mafia-online"
 main = "worker.js"
 compatibility_date = "2025-01-01"
 
 [vars]
-# Username бота из BotFather БЕЗ символа @.
-# ИСПРАВЛЕНО: заполнено (MartinMafiabot) — теперь кнопка «Пригласить»
-# будет открывать ссылку на Mini App, а не копировать голый код комнаты.
+# Username бота из BotFather БЕЗ символа @
 BOT_USERNAME = "MartinMafiabot"
-# Короткое имя приложения, которое вы указали в BotFather командой /newapp
+# Короткое имя приложения из BotFather (/newapp)
 APP_SHORT_NAME = "mafia"
 # "1" разрешает заходить из обычного браузера без Telegram (только для проверки). Для публикации поставьте "0".
 ALLOW_GUESTS = "0"
+
+# ВРЕМЕННО ДЛЯ ТЕСТА: токен бота вписан прямо сюда вместо секрета.
+# Перед публикацией перенеси обратно в секрет:
+#   npx wrangler secret put BOT_TOKEN --name mafia-online
+#   (и удали эту строку из файла!)
+# ВАЖНО: если ты уже делал Revoke в BotFather, этот токен мёртв —
+# тогда вставь в кавычки АКТУАЛЬНЫЙ токен из BotFather.
+BOT_TOKEN = "9160142390:AAGX2KCC7NwczqvBMJbfoOQNnVccDeWSkP0"
+
+# Секрет вебхука: проверяется при вызове /telegram/webhook и /setup.
+# Тоже временно здесь; перед публикацией — npx wrangler secret put WEBHOOK_SECRET
+# и удалить строку. Запомни значение: оно нужно для ссылки /setup?secret=...
+WEBHOOK_SECRET = "MafiaTestHook2026-Kd93nQ2xR8pLmZ5"
 
 # Комнаты игры
 [[durable_objects.bindings]]
@@ -24,19 +33,9 @@ class_name = "GameRoom"
 tag = "v1"
 new_sqlite_classes = ["GameRoom"]
 
-# Секреты (BOT_TOKEN и WEBHOOK_SECRET) сюда НЕ пишутся. Их задают командами:
-#   npx wrangler secret put BOT_TOKEN --name mafia-online
-#   npx wrangler secret put WEBHOOK_SECRET --name mafia-online
-# Либо через панель: dash.cloudflare.com → Workers & Pages → mafia-online →
-# Settings → Variables and Secrets → Add → тип Secret.
-#
-# ПОРЯДОК ЗАПУСКА ПОСЛЕ ЭТОГО ФАЙЛА:
-# 1. Перевыпустить токен в @BotFather (/mybots → бот → API Token → Revoke),
-#    если старый где-то засветился.
-# 2. Задать секреты BOT_TOKEN и WEBHOOK_SECRET (только через панель или
-#    wrangler, НЕ вставлять в этот файл и не публиковать нигде).
-# 3. Задеплоить: npx wrangler deploy (или пуш в GitHub — CI соберёт сам).
-# 4. Открыть в браузере:
-#    https://mafia-online.prsmsk.workers.dev/setup?secret=ВАШ_WEBHOOK_SECRET
+# ПОРЯДОК ЗАПУСКА:
+# 1. Пуш в GitHub → CI задеплоит автоматически (или npx wrangler deploy).
+# 2. Открыть в браузере:
+#    https://mafia-online.prsmsk.workers.dev/setup?secret=MafiaTestHook2026-Kd93nQ2xR8pLmZ5
 #    Должны быть три блока "ok": true.
-# 5. Проверить: бот → /start → «Играть» → «Создать комнату» → «Пригласить».
+# 3. Бот → /start → «Играть» → «Создать комнату».
