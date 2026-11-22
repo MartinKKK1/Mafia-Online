@@ -142,7 +142,7 @@ class Room {
     this.deadline = Date.now() + ms;
     const fn = this.fn;
     this.timer = this.online()
-      ? setTimeout(() => { try { fn(); } catch (e) { console.error('ошибка комнаты', e && e.stack || e); } }, ms)
+      ? setTimeout(() => { try { fn(); } catch (e) { console.error('room error', e && e.stack || e); } }, ms)
       : null;
   }
   clear() { if (this.timer) clearTimeout(this.timer); this.timer = null; this.fn = null; }
@@ -518,7 +518,7 @@ async function handleWebhook(request, env) {
       await tgApi(env, 'answerPreCheckoutQuery', valid
         ? { pre_checkout_query_id: query.id, ok: true }
         : { pre_checkout_query_id: query.id, ok: false, error_message: 'Этот счёт недействителен.' });
-    } catch (e) { console.error('ошибка подтверждения оплаты', e && e.stack || e); }
+    } catch (e) { console.error('pre-checkout error', e && e.stack || e); }
     return new Response('ok');
   }
   const msg = update && update.message;
@@ -557,7 +557,7 @@ async function handleWebhook(request, env) {
       }
     }
   } catch (e) {
-    console.error('ошибка вебхука', e && e.stack || e);
+    console.error('webhook error', e && e.stack || e);
   }
   return new Response('ok');
 }
@@ -571,7 +571,7 @@ async function handleSetup(env, url) {
   out.webhook = await tgApi(env, 'setWebhook', { url: origin + '/telegram/webhook', secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message', 'pre_checkout_query'] });
   out.commands = await tgApi(env, 'setMyCommands', { commands: [
     { command: 'play', description: 'Открыть игру' },
-    { command: 'newgame', description: 'Создать игру и позвать друзей' }
+    { command: 'newgame', description: 'Создать комнату и позвать друзей' }
   ] });
   out.menuButton = await tgApi(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'Играть', web_app: { url: origin } } });
   return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json; charset=utf-8' } });
@@ -590,12 +590,12 @@ async function handleDonate(request, env) {
   const amount = [50, 100, 250].includes(Number(body.amount)) ? Number(body.amount) : 100;
   try {
     const invoice = await tgApi(env, 'createInvoiceLink', {
-      title: 'Поддержать проект',
+      title: 'Поддержать игру',
       description: 'Добровольная поддержка разработки игры «Мафия». Донат не даёт игровых преимуществ.',
       payload: 'donate',
       currency: 'XTR',
       provider_token: '',
-      prices: [{ label: 'Поддержать проект', amount: amount }]
+      prices: [{ label: 'Поддержать игру', amount: amount }]
     });
     if (!invoice || !invoice.ok || typeof invoice.result !== 'string') {
       console.error('createInvoiceLink error', invoice && invoice.description || 'unknown');
@@ -775,219 +775,31 @@ const HTML = String.raw`<!DOCTYPE html>
   .big { color: #f6d889; text-shadow: 0 0 24px rgba(246,216,137,.2); }
   @media (max-width: 520px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; } .card { padding: 13px 5px 11px; } .buttons { gap: 6px; flex-wrap: wrap; } .buttons .btn { flex: 1 1 28%; font-size: 12px; padding: 0 6px; } }
   @media (min-width: 521px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; } }
-
-  /* Визуальная тема в духе игровых витрин: графит, золото и фиолетовый неон. */
-  :root { color-scheme: dark; }
-  body { background: radial-gradient(ellipse at 50% -18%, #34304e 0%, #171824 39%, #090a10 78%); }
-  body.night { background: radial-gradient(ellipse at 50% -18%, #29213d 0%, #12121e 42%, #07080d 82%); }
-  body.day { background: radial-gradient(ellipse at 50% -18%, #51405b 0%, #242337 43%, #10111b 82%); }
-  .header { position: relative; overflow: hidden; padding: calc(17px + env(safe-area-inset-top,0px)) 14px 15px; background: linear-gradient(180deg,rgba(21,20,31,.97),rgba(12,13,21,.82)); border-bottom: 1px solid rgba(221,181,105,.32); }
-  .header:after { content:""; position:absolute; left:12%; right:12%; bottom:-1px; height:1px; background:linear-gradient(90deg,transparent,#d7a95e, #8c69d6,transparent); opacity:.8; }
-  .brand-mark { display:flex; align-items:center; justify-content:center; gap:9px; flex-wrap:wrap; }
-  .brand-icon { display:grid; place-items:center; width:31px; height:31px; border-radius:10px; color:#f2cc83; background:linear-gradient(145deg,#40334f,#211d2c); border:1px solid rgba(242,204,131,.32); box-shadow:0 0 22px rgba(174,126,80,.16); font-size:20px; }
-  .title { font-size:23px; letter-spacing:3px; color:#f0d29a; text-shadow:0 2px 18px rgba(221,181,105,.18); }
-  .brand-sub { width:100%; margin-top:-5px; color:#8f8b9d; font-size:9px; font-weight:800; letter-spacing:3px; }
-  .phase { margin-top:10px; padding:6px 14px; color:#e8d7b6; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09); border-radius:999px; font-size:12px; font-weight:700; letter-spacing:.3px; }
-  .content { max-width:760px; padding:18px 13px calc(250px + env(safe-area-inset-bottom,0px)); }
-  .box { background:linear-gradient(145deg,rgba(31,30,43,.88),rgba(15,16,25,.91)); border:1px solid rgba(255,255,255,.085); border-radius:20px; box-shadow:0 18px 44px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.055); }
-  .box h2 { color:#f0d29a; font-size:19px; letter-spacing:.1px; }
-  .hero { position:relative; overflow:hidden; padding:21px 17px 18px; border-color:rgba(208,166,99,.24); background:radial-gradient(ellipse at 100% 0%,rgba(116,78,155,.24),transparent 48%),linear-gradient(145deg,rgba(39,34,48,.97),rgba(17,17,26,.96)); }
-  .hero:after { content:"♠"; position:absolute; right:10px; top:7px; color:rgba(226,190,130,.055); font-size:130px; line-height:1; pointer-events:none; }
-  .hero h2 { position:relative; z-index:1; margin:7px 0 9px; font-size:24px; line-height:1.15; color:#f3d9a6; }
-  .hero { font-size:14px; color:#c2bdca; }
-  .eyebrow { position:relative; z-index:1; color:#b99bdc; font-size:9px; font-weight:900; letter-spacing:2px; }
-  .hero .row { position:relative; z-index:1; }
-  .btn { min-height:50px; border-radius:14px; background:linear-gradient(135deg,#7453a5,#49366d); border:1px solid rgba(255,255,255,.1); box-shadow:0 8px 22px rgba(68,46,105,.28),inset 0 1px rgba(255,255,255,.17); font-size:14px; letter-spacing:.1px; }
-  .btn.primary { color:#21180d; background:linear-gradient(135deg,#f0d49b,#bd8b4c); box-shadow:0 8px 24px rgba(193,143,74,.2),inset 0 1px rgba(255,255,255,.45); }
-  .btn.danger { background:linear-gradient(135deg,#a64f5a,#733440); }
-  .btn:active { transform:translateY(1px) scale(.975); filter:brightness(1.13); }
-  .input { min-height:50px; border-radius:14px; background:rgba(5,6,12,.48); border-color:rgba(255,255,255,.12); }
-  .input::placeholder { color:#777486; }
-  .grid { gap:10px; }
-  .card { min-height:116px; background:linear-gradient(155deg,rgba(42,39,55,.96),rgba(17,18,28,.98)); border:1px solid rgba(255,255,255,.085); border-radius:18px; box-shadow:0 10px 24px rgba(0,0,0,.2),inset 0 1px rgba(255,255,255,.05); }
-  .card.selectable { border-color:rgba(183,146,221,.48); }
-  .card.selected { border-color:#e9c47d; background:linear-gradient(155deg,rgba(77,59,77,.98),rgba(30,23,36,.98)); box-shadow:0 0 0 1px rgba(233,196,125,.22),0 0 26px rgba(189,139,76,.2); }
-  .card.me { border-color:rgba(151,121,199,.75); }
-  .card.dead { filter:grayscale(.85); opacity:.48; }
-  .avatar { width:52px; height:52px; border:2px solid rgba(237,211,166,.35); background:linear-gradient(135deg,#7755a5,#3b3155); }
-  .avatar.photo { border-color:#e8c27c; box-shadow:0 0 0 3px rgba(232,194,124,.1),0 6px 20px rgba(0,0,0,.4); }
-  .name { color:#f0edf4; font-size:12px; }
-  .tag { background:rgba(213,174,111,.12); color:#e9ca91; border-color:rgba(213,174,111,.16); }
-  .tag.bad { background:rgba(180,68,79,.2); color:#ff9da3; }
-  .tag.good { background:rgba(63,166,122,.17); color:#8ee0b6; }
-  .badge { background:#7654a4; border:1px solid rgba(255,255,255,.16); font-size:8px; letter-spacing:.5px; }
-  .badge.bot { background:#4b4b5b; }
-  .online-dot { width:10px; height:10px; background:#52d69a; }
-  .chat { border-color:rgba(157,130,192,.18); }
-  .chatlog { color:#d7d2df; }
-  .chatlog b { color:#e7c587; }
-  .panel { background:rgba(10,10,17,.94); border-top:1px solid rgba(210,174,116,.25); box-shadow:0 -15px 45px rgba(0,0,0,.42); }
-  .status { color:#e7dfef; }
-  .last { color:#c7a878; }
-  .room-label { text-align:center; color:#9b91aa; font-size:10px; font-weight:900; letter-spacing:2px; }
-  .big { font-size:32px; letter-spacing:6px; color:#f1d39b; }
-  .modal { background:rgba(22,20,31,.98); border:1px solid rgba(207,171,112,.35); border-radius:22px; }
-  .modal h2 { color:#f0d29a; }
-  .log-entry { background:rgba(129,96,164,.1); border-left-color:#9b77c6; }
-  .toast { background:rgba(18,16,26,.97); border-color:rgba(224,188,128,.5); border-radius:14px; }
-  @media (max-width:520px) { .content { padding-left:11px; padding-right:11px; } .hero h2 { font-size:22px; } .buttons .btn { min-height:44px; } }
-  @media (prefers-reduced-motion:no-preference) { .card { animation:card-in .28s ease both; } .btn,.card,.box { transition:transform .18s ease,box-shadow .2s ease,border-color .2s ease,background .25s ease; } }
-  @keyframes card-in { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:translateY(0); } }
-
-
-  /* Финальная тема: витрина игровой платформы с тёплым золотом и фиолетовыми акцентами */
-  :root { color-scheme: dark; }
-  html { background:#09090f; }
-  body {
-    background:
-      radial-gradient(ellipse at 50% -18%, rgba(132,87,177,.24), transparent 48%),
-      radial-gradient(ellipse at 0% 35%, rgba(179,132,67,.08), transparent 34%),
-      linear-gradient(180deg,#111019 0%,#0b0b12 55%,#08090e 100%);
-    color:#f4f0e8;
-  }
-  body.night {
-    background:
-      radial-gradient(ellipse at 50% -18%,rgba(104,69,153,.22),transparent 48%),
-      linear-gradient(180deg,#11101a 0%,#090910 72%,#07080d 100%);
-  }
-  body.day {
-    background:
-      radial-gradient(ellipse at 50% -18%,rgba(196,151,85,.2),transparent 48%),
-      linear-gradient(180deg,#292333 0%,#171522 58%,#0c0c13 100%);
-  }
-  .header {
-    position:sticky; top:0; z-index:90;
-    background:rgba(11,10,17,.88);
-    border-bottom:1px solid rgba(218,177,111,.28);
-    backdrop-filter:blur(22px); -webkit-backdrop-filter:blur(22px);
-  }
-  .title { font-size:23px; letter-spacing:3px; color:#f2d39a; }
-  .phase {
-    padding:6px 15px; border-radius:999px;
-    background:linear-gradient(135deg,rgba(128,91,166,.22),rgba(207,164,94,.12));
-    border:1px solid rgba(220,187,132,.22); color:#e8d8bb;
-  }
-  .content { max-width:760px; padding-top:18px; }
-  .box {
-    background:linear-gradient(145deg,rgba(31,28,40,.94),rgba(16,16,25,.94));
-    border:1px solid rgba(218,184,133,.15); border-radius:20px;
-    box-shadow:0 18px 44px rgba(0,0,0,.28),inset 0 1px rgba(255,255,255,.045);
-  }
-  .hero {
-    min-height:245px; padding:25px 19px 20px;
-    background:
-      radial-gradient(ellipse at 100% 0%,rgba(139,91,184,.3),transparent 48%),
-      radial-gradient(ellipse at 0% 100%,rgba(194,145,75,.12),transparent 48%),
-      linear-gradient(145deg,#25202f,#12121c 72%);
-    border-color:rgba(222,183,124,.28);
-  }
-  .hero:after { color:rgba(229,195,142,.075); font-size:154px; right:13px; top:10px; }
-  .hero h2 { font-size:clamp(25px,6vw,34px); letter-spacing:-.7px; }
-  .hero .eyebrow { color:#c5a0e8; font-size:9px; letter-spacing:2.3px; }
-  .hero ul li::marker { color:#d9b477; }
-  .box h2 { color:#f0d29a; }
-  .grid { gap:11px; }
-  .card {
-    min-height:112px; border-radius:18px;
-    background:linear-gradient(155deg,rgba(43,37,54,.96),rgba(18,18,28,.98));
-    border:1px solid rgba(255,255,255,.09);
-    box-shadow:0 9px 22px rgba(0,0,0,.23),inset 0 1px rgba(255,255,255,.045);
-  }
-  .card.selectable { border-color:rgba(205,174,127,.28); }
-  .card.selected {
-    border-color:#e8c27f;
-    box-shadow:0 0 0 1px rgba(232,194,127,.22),0 0 28px rgba(211,164,91,.24);
-  }
-  .card.me { border-color:rgba(168,133,208,.72); }
-  .card.dead { filter:grayscale(.85); }
-  .avatar { width:52px;height:52px;border-radius:50%; }
-  .name { color:#f3eee5; font-size:12px; }
-  .tag { border-radius:999px; background:rgba(213,174,112,.13); color:#e9cb97; }
-  .tag.bad { background:rgba(190,73,81,.2); color:#ff9a9d; }
-  .tag.good { background:rgba(67,164,119,.17); color:#8ee0b2; }
-  .badge { border-radius:999px; background:#76539c; }
-  .badge.bot { background:#4d4a58; }
-  .chat { background:linear-gradient(145deg,rgba(28,25,37,.96),rgba(15,15,23,.96)); }
-  .chatlog { padding:5px 2px; }
-  .chatlog div { padding:5px 2px; border-bottom:1px solid rgba(255,255,255,.045); }
-  .chatlog b { color:#e9c88f; }
-  .input {
-    min-height:48px; background:rgba(255,255,255,.055);
-    border:1px solid rgba(255,255,255,.13); border-radius:13px;
-  }
-  .btn {
-    min-height:50px; border-radius:14px; font-weight:800;
-    background:linear-gradient(135deg,#7955a2,#50366f);
-    border:1px solid rgba(255,255,255,.12);
-    box-shadow:0 8px 22px rgba(75,48,103,.25),inset 0 1px rgba(255,255,255,.16);
-  }
-  .btn.primary {
-    color:#241a0d;
-    background:linear-gradient(135deg,#f1d6a1,#bd8b4e);
-    box-shadow:0 8px 24px rgba(193,143,74,.22),inset 0 1px rgba(255,255,255,.45);
-  }
-  .btn.danger { background:linear-gradient(135deg,#b9515b,#7d303d); }
-  .btn:focus-visible,.input:focus-visible { outline:2px solid #e9c88f; outline-offset:2px; }
-  .panel {
-    background:rgba(10,9,15,.94); border-top:1px solid rgba(215,177,116,.3);
-    backdrop-filter:blur(24px); -webkit-backdrop-filter:blur(24px);
-    box-shadow:0 -14px 40px rgba(0,0,0,.35);
-  }
-  .status { color:#e9e1d4; }
-  .last { color:#b9d9c5; }
-  .modal {
-    background:linear-gradient(145deg,#242031,#12121c);
-    border:1px solid rgba(219,181,121,.32);
-    box-shadow:0 26px 80px rgba(0,0,0,.62);
-  }
-  .modal h2 { color:#f0d29a; }
-  .log-entry { background:rgba(132,94,169,.12); border-left-color:#b28ad7; }
-  .toast {
-    background:rgba(17,15,24,.97); border:1px solid rgba(225,188,128,.58);
-    box-shadow:0 14px 38px rgba(0,0,0,.42);
-  }
-  .big { color:#f1d39b; text-shadow:0 0 26px rgba(223,183,116,.22); }
-  @media (max-width:520px) {
-    .content { padding-left:12px; padding-right:12px; }
-    .grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:9px; }
-    .buttons { gap:6px; flex-wrap:wrap; }
-    .buttons .btn { flex:1 1 28%; min-width:0; font-size:12px; }
-    .hero { padding:22px 16px 18px; }
-  }
-  @media (min-width:521px) {
-    .grid { grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; }
-    .content { padding-bottom:190px; }
-  }
-  @media (prefers-reduced-motion:reduce) {
-    *,*::before,*::after { scroll-behavior:auto!important; transition:none!important; animation:none!important; }
-  }
-
 </style>
 </head>
 <body>
 
 <header class="header">
-  <div class="brand-mark"><span class="brand-icon">♠</span><span class="title">МАФИЯ</span><span class="brand-sub">ГОРОДСКАЯ ИГРА</span></div>
-  <div class="phase"><span id="phase">Сетевая игра</span> <span id="timer"></span></div>
+  <div class="title">🎭 МАФИЯ</div>
+  <div class="phase"><span id="phase">Мультиплеер</span> <span id="timer"></span></div>
 </header>
 
 <main class="content">
   <section id="menu">
-    <div class="box hero">
-      <div class="eyebrow">ГОРОД ЗАСЫПАЕТ. ПРОСЫПАЕТСЯ МАФИЯ.</div>
-      <h2>Твоя ночь. Твои правила.</h2>
-      Собери друзей за одним столом. До 8 участников, случайные роли и боты на свободных местах. Найди мафию раньше, чем она найдёт тебя.
-      <div class="row"><button class="btn primary" id="btn-create">Создать игру</button></div>
-      <div class="row"><button class="btn" id="btn-donate-menu">💛 Поддержать проект</button></div>
+    <div class="box">
+      <h2>Играйте с друзьями</h2>
+      За столом 8 игроков. Роли раздаются случайно: 2 мафии, доктор, шериф и 4 мирных. Свободные места займут боты.
+      <div class="row"><button class="btn primary" id="btn-create">Создать комнату</button></div>
+      <div class="row"><button class="btn" id="btn-donate-menu">💛 Поддержать игру</button></div>
       <div class="row">
-        <input class="input" id="code-input" maxlength="12" placeholder="Код игры" autocomplete="off" autocapitalize="characters">
+        <input class="input" id="code-input" maxlength="12" placeholder="Код комнаты" autocomplete="off" autocapitalize="characters">
         <button class="btn" id="btn-join">Войти</button>
       </div>
-      <div class="row" id="resume-row" style="display:none"><button class="btn" id="btn-resume">Вернуться в игру</button></div>
+      <div class="row" id="resume-row" style="display:none"><button class="btn" id="btn-resume">Вернуться в комнату</button></div>
       <div class="status" id="menu-status" style="margin-top:10px"></div>
     </div>
     <div class="box">
-      <h2>Как играть</h2>
+      <h2>Правила</h2>
       <ul>
         <li>Мафия ночью выбирает жертву, днём прикидывается мирной.</li>
         <li>Доктор ночью лечит одного игрока, шериф проверяет, мафия ли он.</li>
@@ -999,36 +811,36 @@ const HTML = String.raw`<!DOCTYPE html>
 
   <section id="room" style="display:none">
     <div class="box" id="lobby-box" style="display:none">
-      <div class="room-label">КОД ИГРЫ</div>
+      <div style="text-align:center">Код комнаты</div>
       <div class="big" id="room-code"></div>
     </div>
     <div class="grid" id="grid"></div>
     <div class="box chat" id="chat-box">
       <div class="chatlog" id="chatlog"></div>
       <form class="row" id="chat-form" autocomplete="off">
-        <input class="input" id="chat-input" maxlength="200" placeholder="Напиши сообщение…">
-        <button class="btn" type="submit" style="flex:none; min-width:80px">Отправить</button>
+        <input class="input" id="chat-input" maxlength="200" placeholder="Сообщение">
+        <button class="btn" type="submit" style="flex:none; min-width:80px">Отпр.</button>
       </form>
     </div>
   </section>
 </main>
 
 <footer class="panel" id="panel" style="display:none">
-  <div class="conn" id="conn">Связь потеряна. Восстанавливаем подключение…</div>
+  <div class="conn" id="conn">Нет связи, переподключаемся…</div>
   <div class="status" id="status"></div>
   <div class="last" id="last"></div>
   <div class="buttons">
     <button class="btn primary" id="btn-main" style="display:none"></button>
-    <button class="btn" id="btn-invite" style="display:none">Позвать друзей</button>
-    <button class="btn" id="btn-donate-room">💛 Поддержать</button>
-    <button class="btn" id="btn-log">Хроника</button>
+    <button class="btn" id="btn-invite" style="display:none">Пригласить</button>
+    <button class="btn" id="btn-donate-room">💛 Донат</button>
+    <button class="btn" id="btn-log">Журнал</button>
     <button class="btn danger" id="btn-leave">Выйти</button>
   </div>
 </footer>
 
 <div class="overlay" id="overlay">
   <div class="modal">
-    <h2>Хроника игры</h2>
+    <h2>Журнал игры</h2>
     <div class="log" id="log"></div>
     <button class="btn" id="btn-close" style="margin-top:10px; flex:none">Закрыть</button>
   </div>
@@ -1039,19 +851,17 @@ const HTML = String.raw`<!DOCTYPE html>
 (function () {
   var tg = window.Telegram && window.Telegram.WebApp;
   if (tg) {
-    try { tg.ready(); tg.expand(); tg.setHeaderColor('#15141f'); tg.setBackgroundColor('#0d0d15'); } catch (e) {}
+    try { tg.ready(); tg.expand(); tg.setHeaderColor('#1a1a2e'); tg.setBackgroundColor('#1a1a2e'); } catch (e) {}
   }
   var CFG = /*CFG*/{};
   var ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   var ROLE_NAME = { mafia: 'Мафия', doctor: 'Доктор', sheriff: 'Шериф', civilian: 'Мирный' };
 
   var S = null, ws = null, code = null, leaving = false, retry = 0, retryTimer = null;
-  var lastLogLen = -1, endAt = 0, connected = true, lastPhase = null;
+  var lastLogLen = -1, endAt = 0, connected = true;
 
   function $(id) { return document.getElementById(id); }
   function haptic(k) { try { if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(k || 'light'); } catch (e) {} }
-  function hapticNotice(k) { try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(k || 'success'); } catch (e) {} }
-  function hapticSelect() { try { if (tg && tg.HapticFeedback && tg.HapticFeedback.selectionChanged) tg.HapticFeedback.selectionChanged(); else haptic('light'); } catch (e) {} }
   function store(key, val) {
     try {
       if (val === undefined) return localStorage.getItem(key);
@@ -1107,7 +917,7 @@ const HTML = String.raw`<!DOCTYPE html>
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var mine = new WebSocket(proto + '//' + location.host + '/ws?code=' + encodeURIComponent(c));
     ws = mine;
-    $('menu-status').textContent = 'Подключаемся к игре…';
+    $('menu-status').textContent = 'Подключаемся…';
     mine.onopen = function () {
       retry = 0;
       send({ t: 'join', initData: tg ? tg.initData : '', guestId: guestId(), name: guestName() });
@@ -1140,21 +950,13 @@ const HTML = String.raw`<!DOCTYPE html>
     if (m.t === 'state') {
       setConn(true);
       var first = S === null;
-      var previousPhase = lastPhase;
       S = m;
-      lastPhase = m.phase;
-      if (!first && previousPhase !== m.phase) {
-        if (m.phase === 'over') {
-          var won = (m.winner === 'civil' && S.myRole !== 'mafia') || (m.winner === 'mafia' && S.myRole === 'mafia');
-          hapticNotice(won ? 'success' : 'error');
-        } else { haptic('medium'); }
-      }
       endAt = m.remain === null ? 0 : Date.now() + m.remain;
       store('lastRoom', code);
       var n = S.log.length;
       if (lastLogLen >= 0 && n > lastLogLen) {
         var fresh = S.log.slice(lastLogLen).filter(function (x) { return x.indexOf(' → ') < 0 && x.indexOf('Наступил') !== 0; });
-        if (fresh.length) { toast(fresh.join('\n')); haptic('light'); }
+        if (fresh.length) { toast(fresh.join('\n')); haptic('medium'); }
       }
       lastLogLen = n;
       if (first) $('menu-status').textContent = '';
@@ -1166,7 +968,6 @@ const HTML = String.raw`<!DOCTYPE html>
       addChat(m.item);
     } else if (m.t === 'error') {
       toast(m.msg);
-      hapticNotice('error');
       if (m.fatal) {
         leaving = true;
         store('lastRoom', null);
@@ -1210,12 +1011,12 @@ const HTML = String.raw`<!DOCTYPE html>
   function statusText() {
     var host = S.host === S.me;
     if (S.phase === 'lobby') {
-      return host ? 'Вы ведущий комнаты. Когда будете готовы, нажмите «Начать игру». Свободные места займут боты.' : 'Ожидаем, пока ведущий начнёт игру.';
+      return host ? 'Вы хозяин. Когда все соберутся, нажмите «Начать». Свободные места займут боты.' : 'Ждём, пока хозяин начнёт игру.';
     }
     if (S.phase === 'over') {
       return (S.winner === 'civil' ? 'Победили мирные. ' : 'Победила мафия. ') + (host ? '' : 'Ждём хозяина для новой игры.');
     }
-    if (!S.myAlive) return 'Вы выбыли из партии. Теперь можно наблюдать за игрой.';
+    if (!S.myAlive) return 'Вы выбыли. Наблюдайте за игрой.';
     var tail = S.myAct ? ' Выбор принят, его можно изменить до конца таймера.' : '';
     if (S.phase === 'night') {
       if (S.myRole === 'mafia') return 'Ночь. Выберите жертву. Если вас двое, решает большинство.' + tail;
@@ -1227,8 +1028,8 @@ const HTML = String.raw`<!DOCTYPE html>
   }
 
   function phaseText() {
-    if (S.phase === 'lobby') return '🚪 Ожидание игроков';
-    if (S.phase === 'over') return 'Партия завершена';
+    if (S.phase === 'lobby') return '🚪 Лобби';
+    if (S.phase === 'over') return 'Игра окончена';
     return (S.phase === 'night' ? '🌙 Ночь №' : '☀️ День №') + S.round;
   }
 
@@ -1247,11 +1048,11 @@ const HTML = String.raw`<!DOCTYPE html>
     $('panel').style.display = inRoom ? 'block' : 'none';
     document.body.className = inRoom && (S.phase === 'night' || S.phase === 'day') ? S.phase : '';
     if (!inRoom) {
-      $('phase').textContent = 'Мафия онлайн';
+      $('phase').textContent = 'Мультиплеер';
       $('timer').textContent = '';
       var saved = store('lastRoom');
       $('resume-row').style.display = saved ? 'flex' : 'none';
-      if (saved) $('btn-resume').textContent = 'Вернуться в игру ' + saved;
+      if (saved) $('btn-resume').textContent = 'Вернуться в комнату ' + saved;
       return;
     }
 
@@ -1281,13 +1082,13 @@ const HTML = String.raw`<!DOCTYPE html>
       if (S.myAct === q.id) card.className += ' selected';
       card.addEventListener('click', function () {
         if (!canPick(q)) return;
-        hapticSelect();
+        haptic('light');
         send({ t: 'act', target: S.myAct === q.id ? null : q.id });
       });
       if (q.id === S.me || q.bot || !q.online) {
         var badge = document.createElement('span');
         badge.className = 'badge' + (q.bot ? ' bot' : '');
-        badge.textContent = q.id === S.me ? 'ВЫ' : (q.bot ? 'БОТ' : 'НЕТ СВЯЗИ');
+        badge.textContent = q.id === S.me ? 'вы' : (q.bot ? 'бот' : 'нет связи');
         card.appendChild(badge);
       }
       var dot = document.createElement('span');
@@ -1336,7 +1137,7 @@ const HTML = String.raw`<!DOCTYPE html>
     if (!tg || !tg.initData || !tg.openInvoice) { toast('Донаты доступны при открытии игры через Telegram.'); return; }
     var amount = 100;
     if (tg.showPopup) {
-      tg.showPopup({ title: 'Поддержать проект', message: 'Выберите сумму добровольной поддержки в звёздах Telegram.', buttons: [
+      tg.showPopup({ title: 'Поддержать игру', message: 'Выбери сумму добровольного доната в Telegram Stars.', buttons: [
         { id: '50', text: '⭐ 50' }, { id: '100', text: '⭐ 100' }, { id: '250', text: '⭐ 250' }
       ] }, function (id) { if (id && id !== 'cancel') createDonateInvoice(Number(id)); });
     } else createDonateInvoice(amount);
@@ -1362,27 +1163,26 @@ const HTML = String.raw`<!DOCTYPE html>
     }
     var text = link || code;
     try {
-      navigator.clipboard.writeText(text).then(function () { toast('Скопировано: ' + text); }, function () { toast('Код игры: ' + code); });
-    } catch (e) { toast('Код игры: ' + code); }
+      navigator.clipboard.writeText(text).then(function () { toast('Скопировано: ' + text); }, function () { toast('Код комнаты: ' + code); });
+    } catch (e) { toast('Код комнаты: ' + code); }
   }
 
   $('btn-create').addEventListener('click', function () { haptic('medium'); connect(randomCode()); });
   $('btn-join').addEventListener('click', function () {
     var c = normCode($('code-input').value);
-    if (!c) { toast('Введи код игры (латинские буквы и цифры)'); return; }
+    if (!c) { toast('Введите код комнаты (латиницей и цифрами)'); return; }
     haptic('medium'); connect(c);
   });
-  $('btn-resume').addEventListener('click', function () { var c = normCode(store('lastRoom')); if (c) { haptic('medium'); connect(c); } });
+  $('btn-resume').addEventListener('click', function () { var c = normCode(store('lastRoom')); if (c) connect(c); });
   $('btn-main').addEventListener('click', function () {
     haptic('medium');
     send({ t: S.phase === 'over' ? 'again' : 'start' });
   });
-  $('btn-invite').addEventListener('click', function () { haptic('light'); invite(); });
+  $('btn-invite').addEventListener('click', invite);
   $('btn-donate-menu').addEventListener('click', function () { haptic('light'); donate(); });
   $('btn-donate-room').addEventListener('click', function () { haptic('light'); donate(); });
   $('btn-leave').addEventListener('click', function () { haptic('light'); leaveRoom(); });
   $('btn-log').addEventListener('click', function () {
-    haptic('light');
     var box = $('log');
     box.innerHTML = '';
     (S ? S.log : []).forEach(function (t) {
@@ -1394,7 +1194,7 @@ const HTML = String.raw`<!DOCTYPE html>
     $('overlay').classList.add('active');
     box.scrollTop = box.scrollHeight;
   });
-  $('btn-close').addEventListener('click', function () { haptic('light'); $('overlay').classList.remove('active'); });
+  $('btn-close').addEventListener('click', function () { $('overlay').classList.remove('active'); });
   $('chat-form').addEventListener('submit', function (e) {
     e.preventDefault();
     var inp = $('chat-input');
