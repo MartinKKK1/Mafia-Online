@@ -1,0 +1,25 @@
+# Настройки деплоя для worker.js (Cloudflare Workers)
+name = "mafia"
+main = "worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+# Username бота из BotFather БЕЗ символа @ (например my_mafia_game_bot). Нужен для ссылок-приглашений.
+BOT_USERNAME = ""
+# Короткое имя приложения, которое вы указали в BotFather командой /newapp
+APP_SHORT_NAME = "mafia"
+# "1" разрешает заходить из обычного браузера без Telegram (только для проверки). Для публикации поставьте "0".
+ALLOW_GUESTS = "0"
+
+# Комнаты игры
+[[durable_objects.bindings]]
+name = "ROOMS"
+class_name = "GameRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["GameRoom"]
+
+# Секреты (BOT_TOKEN и WEBHOOK_SECRET) сюда НЕ пишутся. Их задают командами:
+#   npx wrangler secret put BOT_TOKEN
+#   npx wrangler secret put WEBHOOK_SECRET

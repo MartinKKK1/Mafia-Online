@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Мафия</title>
+
+<!-- Telegram Mini Apps SDK -->
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+  html, body { width: 100%; min-height: 100%; overflow-x: hidden; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: linear-gradient(160deg, #1a1a2e 0%, #16213e 100%);
+    color: #fff;
+    transition: background 0.6s;
+  }
+  body.night { background: linear-gradient(160deg, #0b0b17 0%, #101a33 100%); }
+  body.day   { background: linear-gradient(160deg, #2b3a67 0%, #4a6fa5 100%); }
+
+  /* ---------- Шапка ---------- */
+  .header {
+    text-align: center;
+    padding: 14px 12px 12px;
+    padding-top: calc(14px + env(safe-area-inset-top, 0px));
+    background: rgba(0, 0, 0, 0.35);
+    border-bottom: 2px solid #ffd700;
+  }
+  .title { font-size: 24px; font-weight: 800; color: #ffd700; letter-spacing: 1px; }
+  .phase {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 4px 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.12);
+    font-size: 14px;
+  }
+
+  /* ---------- Контент ---------- */
+  .content { padding: 14px 12px 190px; max-width: 900px; margin: 0 auto; }
+
+  .intro {
+    background: rgba(0, 0, 0, 0.35);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 14px;
+    padding: 18px;
+    line-height: 1.5;
+    font-size: 15px;
+  }
+  .intro h2 { color: #ffd700; margin-bottom: 8px; font-size: 18px; }
+  .intro ul { margin: 8px 0 0 18px; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+  }
+  @media (min-width: 480px) { .grid { grid-template-columns: repeat(4, 1fr); } }
+
+  .card {
+    position: relative;
+    background: rgba(0, 0, 0, 0.4);
+    border: 2px solid transparent;
+    border-radius: 14px;
+    padding: 12px 8px;
+    text-align: center;
+    transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+    user-select: none;
+  }
+  .card.selectable { cursor: pointer; border-color: rgba(255, 255, 255, 0.25); }
+  .card.selected {
+    border-color: #ffd700;
+    transform: scale(1.04);
+    box-shadow: 0 0 18px rgba(255, 215, 0, 0.5);
+  }
+  .card.dead { opacity: 0.45; filter: grayscale(100%); }
+  .card.me { border-color: #667eea; }
+
+  .avatar {
+    width: 52px; height: 52px;
+    margin: 0 auto 8px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 22px; font-weight: 700;
+  }
+  .name {
+    font-size: 14px; font-weight: 700; margin-bottom: 6px;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .tag {
+    display: inline-block;
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 10px;
+    background: rgba(255, 215, 0, 0.2);
+    color: #ffd700;
+    min-height: 20px;
+  }
+  .tag.bad  { background: rgba(231, 76, 60, 0.3); color: #ff8a7d; }
+  .tag.good { background: rgba(46, 204, 113, 0.25); color: #7dffb0; }
+  .me-badge {
+    position: absolute; top: 6px; right: 6px;
+    font-size: 10px; padding: 2px 6px; border-radius: 8px;
+    background: #667eea;
+  }
+
+  /* ---------- Нижняя панель ---------- */
+  .panel {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    z-index: 100;
+    background: rgba(0, 0, 0, 0.92);
+    border-top: 2px solid #667eea;
+    padding: 12px 12px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+  .status { text-align: center; font-size: 14px; color: #ccc; margin-bottom: 10px; min-height: 36px; }
+  .buttons { display: flex; gap: 8px; justify-content: center; }
+
+  .btn {
+    flex: 1;
+    min-height: 46px;
+    border: none;
+    border-radius: 10px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    cursor: pointer;
+  }
+  .btn.primary { flex: 2; background: linear-gradient(135deg, #27ae60, #2ecc71); }
+  .btn.danger  { background: linear-gradient(135deg, #e74c3c, #c0392b); }
+  .btn:active  { transform: scale(0.97); }
+  .btn:disabled { opacity: 0.5; }
+
+  /* ---------- Журнал ---------- */
+  .overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .overlay.active { display: flex; }
+  .modal {
+    width: 92%; max-width: 480px; max-height: 80vh;
+    display: flex; flex-direction: column;
+    background: #1e272e;
+    border: 2px solid #667eea;
+    border-radius: 16px;
+    padding: 18px;
+  }
+  .modal h2 { color: #ffd700; text-align: center; margin-bottom: 12px; }
+  .log { overflow-y: auto; flex: 1; }
+  .log-entry {
+    padding: 8px 10px; margin: 4px 0;
+    background: rgba(102, 126, 234, 0.12);
+    border-left: 3px solid #667eea;
+    border-radius: 4px;
+    font-size: 13px;
+  }
+
+  .toast {
+    position: fixed; left: 50%; top: 80px;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.9);
+    border: 1px solid #ffd700;
+    padding: 10px 16px; border-radius: 10px;
+    font-size: 14px; z-index: 300;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.25s;
+    max-width: 90%; text-align: center;
+  }
+  .toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="title">🎭 МАФИЯ</div>
+  <div class="phase" id="phase">Ожидание начала</div>
+</header>
+
+<main class="content">
+  <div class="intro" id="intro">
+    <h2>Правила</h2>
+    За столом 8 игроков: вы и 7 ботов. Роли раздаются случайно:
+    <ul>
+      <li>2 мафии: ночью убивают, днём прикидываются мирными</li>
+      <li>Доктор: ночью лечит одного игрока</li>
+      <li>Шериф: ночью проверяет, мафия ли игрок</li>
+      <li>4 мирных: днём ищут мафию голосованием</li>
+    </ul>
+    <br>Мирные побеждают, когда мафии не осталось. Мафия побеждает, когда её не меньше, чем остальных.
+  </div>
+  <div class="grid" id="grid"></div>
+</main>
+
+<footer class="panel">
+  <div class="status" id="status">Нажмите «Новая игра»</div>
+  <div class="buttons">
+    <button class="btn primary" id="btn-main">Новая игра</button>
+    <button class="btn" id="btn-log">Журнал</button>
+    <button class="btn danger" id="btn-reset">Сброс</button>
+  </div>
+</footer>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h2>Журнал игры</h2>
+    <div class="log" id="log"></div>
+    <button class="btn" id="btn-close" style="margin-top:12px; flex:none;">Закрыть</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* =====================================================
+   Telegram Mini App
+   ===================================================== */
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) {
+  tg.ready();    // сообщаем Telegram, что приложение загрузилось
+  tg.expand();   // раскрываем на весь экран
+  try {
+    tg.setHeaderColor('#1a1a2e');
+    tg.setBackgroundColor('#1a1a2e');
+  } catch (e) { /* старые версии клиента */ }
+}
+
+function haptic(kind) {
+  try {
+    if (tg && tg.HapticFeedback) tg.HapticFeedback.impactOccurred(kind || 'light');
+  } catch (e) {}
+}
+
+function userName() {
+  const u = tg && tg.initDataUnsafe && tg.initDataUnsafe.user;
+  return (u && u.first_name) ? u.first_name : 'Вы';
+}
+
+/* =====================================================
+   Константы
+   ===================================================== */
+const TOTAL = 8;
+// Шанс, что мирный бот днём «угадает» мафию (имитация обсуждения).
+// Больше значение: проще мирным, меньше: проще мафии.
+const BOT_INSIGHT = 0.35;
+const ROLE = { MAFIA: 'mafia', DOCTOR: 'doctor', SHERIFF: 'sheriff', CIVIL: 'civilian' };
+const ROLE_NAME = {
+  mafia: 'Мафия', doctor: 'Доктор', sheriff: 'Шериф', civilian: 'Мирный'
+};
+const BOT_NAMES = [
+  'Алексей', 'Дмитрий', 'Олег', 'Сергей', 'Иван', 'Андрей', 'Николай',
+  'Михаил', 'Павел', 'Юрий', 'Елена', 'Мария', 'Анна', 'Ольга', 'Татьяна'
+];
+
+let G = null;       // состояние игры (null, пока игра не начата)
+let busy = false;   // блокировка ввода во время смены фазы
+
+/* =====================================================
+   Вспомогательные функции
+   ===================================================== */
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+function alivePlayers() { return G.players.filter(p => p.alive); }
+function byId(id) { return G.players.find(p => p.id === id); }
+
+function addLog(text) {
+  G.log.push(text);
+  const box = document.getElementById('log');
+  const div = document.createElement('div');
+  div.className = 'log-entry';
+  div.textContent = text;
+  box.appendChild(div);
+  box.scrollTop = box.scrollHeight;
+}
+
+let toastTimer = null;
+function toast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+/* =====================================================
+   Старт и сброс
+   ===================================================== */
+function startGame() {
+  const roles = shuffle([
+    ROLE.MAFIA, ROLE.MAFIA, ROLE.DOCTOR, ROLE.SHERIFF,
+    ROLE.CIVIL, ROLE.CIVIL, ROLE.CIVIL, ROLE.CIVIL
+  ]);
+  const names = shuffle(BOT_NAMES).slice(0, TOTAL - 1);
+
+  const players = [{ id: 0, name: userName(), role: roles[0], alive: true, isMe: true }];
+  for (let i = 1; i < TOTAL; i++) {
+    players.push({ id: i, name: names[i - 1], role: roles[i], alive: true, isMe: false });
+  }
+
+  G = {
+    players: players,
+    me: players[0],
+    phase: 'night',
+    night: 1,
+    selected: null,
+    over: false,
+    winner: null,
+    known: {},      // результаты проверок шерифа: id -> true (мафия) / false
+    log: []
+  };
+  busy = false;
+  document.getElementById('log').innerHTML = '';
+
+  addLog('Игра началась. Ваша роль: ' + ROLE_NAME[G.me.role]);
+  if (G.me.role === ROLE.MAFIA) {
+    const mate = G.players.find(p => p.role === ROLE.MAFIA && !p.isMe);
+    addLog('Ваш напарник по мафии: ' + mate.name);
+  }
+  addLog('Наступила ночь №1');
+  render();
+}
+
+function resetGame() {
+  G = null;
+  busy = false;
+  document.getElementById('log').innerHTML = '';
+  render();
+}
+
+/* =====================================================
+   Что может выбрать игрок
+   ===================================================== */
+function needsTarget() {
+  if (!G || G.over || !G.me.alive) return false;
+  if (G.phase === 'day') return true;
+  return G.me.role !== ROLE.CIVIL;   // ночью цель нужна всем, кроме мирных
+}
+
+function canSelect(p) {
+  if (!G || G.over || busy || !needsTarget() || !p.alive) return false;
+  if (G.phase === 'day') return !p.isMe;
+  switch (G.me.role) {
+    case ROLE.MAFIA:   return p.role !== ROLE.MAFIA;   // своих не убиваем
+    case ROLE.DOCTOR:  return true;                    // можно лечить и себя
+    case ROLE.SHERIFF: return !p.isMe;
+    default:           return false;
+  }
+}
+
+function selectPlayer(p) {
+  if (!canSelect(p)) return;
+  G.selected = (G.selected === p.id) ? null : p.id;
+  haptic('light');
+  render();
+}
+
+/* =====================================================
+   Ночь
+   ===================================================== */
+function resolveNight() {
+  busy = true;
+  render();
+
+  const me = G.me;
+  const userTarget = G.selected;
+
+  // --- Мафия ---
+  let killId = null;
+  const mafiaAlive = G.players.filter(p => p.role === ROLE.MAFIA && p.alive);
+  if (mafiaAlive.length > 0) {
+    if (me.alive && me.role === ROLE.MAFIA) {
+      killId = userTarget;
+    } else {
+      killId = pick(G.players.filter(p => p.alive && p.role !== ROLE.MAFIA)).id;
+    }
+  }
+
+  // --- Доктор ---
+  let saveId = null;
+  const doctor = G.players.find(p => p.role === ROLE.DOCTOR && p.alive);
+  if (doctor) {
+    saveId = doctor.isMe ? userTarget : pick(alivePlayers()).id;
+  }
+
+  // --- Шериф (проверка только для игрока) ---
+  if (me.alive && me.role === ROLE.SHERIFF && userTarget !== null) {
+    const t = byId(userTarget);
+    const isMafia = t.role === ROLE.MAFIA;
+    G.known[t.id] = isMafia;
+    addLog('Проверка шерифа: ' + t.name + (isMafia ? ' — МАФИЯ' : ' — не мафия'));
+    toast(t.name + (isMafia ? ': мафия!' : ': не мафия'));
+  }
+
+  G.selected = null;
+
+  setTimeout(() => {
+    // --- Итоги ночи ---
+    if (killId !== null && killId === saveId) {
+      addLog('Утро. Ночью на кого-то напали, но доктор спас жертву');
+    } else if (killId !== null) {
+      const victim = byId(killId);
+      victim.alive = false;
+      addLog('Утро. Этой ночью убит(а) ' + victim.name + ' (' + ROLE_NAME[victim.role] + ')');
+      if (victim.isMe) toast('Вас убили этой ночью');
+    } else {
+      addLog('Утро. Ночь прошла спокойно');
+    }
+
+    busy = false;
+    if (!checkWin()) {
+      G.phase = 'day';
+      addLog('Наступил день №' + G.night + '. Начинается голосование');
+    }
+    render();
+  }, 900);
+}
+
+/* =====================================================
+   День: голосование
+   ===================================================== */
+function resolveDay() {
+  busy = true;
+  render();
+
+  const votes = {};   // id цели -> количество голосов
+  const voters = alivePlayers();
+
+  voters.forEach(v => {
+    let targetId;
+    if (v.isMe) {
+      targetId = G.selected;
+    } else if (v.role === ROLE.MAFIA) {
+      // мафия-бот не голосует против своих
+      targetId = pick(voters.filter(p => p.role !== ROLE.MAFIA)).id;
+    } else {
+      const others = voters.filter(p => p.id !== v.id);
+      const suspects = others.filter(p => p.role === ROLE.MAFIA);
+      targetId = (suspects.length && Math.random() < BOT_INSIGHT)
+        ? pick(suspects).id
+        : pick(others).id;
+    }
+    if (targetId === null || targetId === undefined) return;
+    votes[targetId] = (votes[targetId] || 0) + 1;
+    addLog(v.name + ' → ' + byId(targetId).name);
+  });
+
+  G.selected = null;
+
+  setTimeout(() => {
+    // Ищем лидера голосования; при ничьей никто не выбывает
+    let max = 0, leaders = [];
+    Object.keys(votes).forEach(id => {
+      const n = votes[id];
+      if (n > max) { max = n; leaders = [Number(id)]; }
+      else if (n === max) { leaders.push(Number(id)); }
+    });
+
+    if (leaders.length === 1) {
+      const out = byId(leaders[0]);
+      out.alive = false;
+      addLog('Город изгнал: ' + out.name + ' (' + ROLE_NAME[out.role] + '), голосов: ' + max);
+      if (out.isMe) toast('Вас изгнали');
+    } else {
+      addLog('Голоса разделились. Никто не изгнан');
+    }
+
+    busy = false;
+    if (!checkWin()) {
+      G.night++;
+      G.phase = 'night';
+      addLog('Наступила ночь №' + G.night);
+    }
+    render();
+  }, 900);
+}
+
+/* =====================================================
+   Победа
+   ===================================================== */
+function checkWin() {
+  const mafia = G.players.filter(p => p.role === ROLE.MAFIA && p.alive).length;
+  const others = G.players.filter(p => p.role !== ROLE.MAFIA && p.alive).length;
+
+  let winner = null;
+  if (mafia === 0) winner = 'civil';
+  else if (mafia >= others) winner = 'mafia';
+  if (!winner) return false;
+
+  G.over = true;
+  G.winner = winner;
+  G.phase = 'over';
+  const iWon = (winner === 'mafia') === (G.me.role === ROLE.MAFIA);
+  addLog(winner === 'civil'
+    ? '🎉 Мафия уничтожена. Мирные победили!'
+    : '💀 Мафия захватила город. Мафия победила!');
+  addLog(iWon ? 'Вы победили!' : 'Вы проиграли.');
+  haptic(iWon ? 'heavy' : 'medium');
+  try { if (tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred(iWon ? 'success' : 'error'); } catch (e) {}
+  return true;
+}
+
+/* =====================================================
+   Кнопка действия
+   ===================================================== */
+function onMain() {
+  if (busy) return;
+  if (!G || G.over) { startGame(); return; }
+
+  if (needsTarget() && G.selected === null) {
+    toast('Сначала выберите игрока');
+    return;
+  }
+  haptic('medium');
+  if (G.phase === 'night') resolveNight();
+  else if (G.phase === 'day') resolveDay();
+}
+
+/* =====================================================
+   Отрисовка
+   ===================================================== */
+function mainLabel() {
+  if (!G || G.over) return 'Новая игра';
+  if (!G.me.alive) return 'Дальше';
+  if (G.phase === 'night') {
+    switch (G.me.role) {
+      case ROLE.MAFIA:   return 'Убить';
+      case ROLE.DOCTOR:  return 'Лечить';
+      case ROLE.SHERIFF: return 'Проверить';
+      default:           return 'Спать';
+    }
+  }
+  return 'Голосовать';
+}
+
+function statusText() {
+  if (!G) return 'Нажмите «Новая игра»';
+  if (G.over) return G.winner === 'civil' ? 'Победили мирные' : 'Победила мафия';
+  if (busy) return G.phase === 'night' ? 'Город просыпается…' : 'Подсчёт голосов…';
+  if (!G.me.alive) return 'Вы выбыли. Наблюдайте за игрой';
+  if (G.phase === 'night') {
+    switch (G.me.role) {
+      case ROLE.MAFIA:   return 'Ночь. Выберите жертву';
+      case ROLE.DOCTOR:  return 'Ночь. Выберите, кого лечить';
+      case ROLE.SHERIFF: return 'Ночь. Выберите, кого проверить';
+      default:           return 'Ночь. Вы спите. Нажмите «Спать»';
+    }
+  }
+  return 'День. Выберите, кого изгнать';
+}
+
+function phaseText() {
+  if (!G) return 'Ожидание начала';
+  if (G.over) return 'Игра окончена';
+  return (G.phase === 'night' ? '🌙 Ночь №' : '☀️ День №') + G.night;
+}
+
+// Что показываем под именем игрока
+function tagFor(p) {
+  if (!G) return null;
+  const showRole =
+    G.over ||
+    !p.alive ||
+    p.isMe ||
+    (G.me.role === ROLE.MAFIA && p.role === ROLE.MAFIA);
+  if (showRole) {
+    return { text: ROLE_NAME[p.role], cls: p.role === ROLE.MAFIA ? 'bad' : '' };
+  }
+  if (Object.prototype.hasOwnProperty.call(G.known, p.id)) {
+    return G.known[p.id]
+      ? { text: 'мафия', cls: 'bad' }
+      : { text: 'не мафия', cls: 'good' };
+  }
+  return { text: p.alive ? '?' : '', cls: '' };
+}
+
+function render() {
+  document.body.className = (G && !G.over) ? G.phase : '';
+  document.getElementById('phase').textContent = phaseText();
+  document.getElementById('status').textContent = statusText();
+
+  const main = document.getElementById('btn-main');
+  main.textContent = mainLabel();
+  main.disabled = busy;
+
+  document.getElementById('intro').style.display = G ? 'none' : 'block';
+
+  const grid = document.getElementById('grid');
+  grid.innerHTML = '';
+  if (!G) return;
+
+  G.players.forEach(p => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    if (!p.alive) card.classList.add('dead');
+    if (p.isMe) card.classList.add('me');
+    if (canSelect(p)) card.classList.add('selectable');
+    if (G.selected === p.id) card.classList.add('selected');
+    card.addEventListener('click', () => selectPlayer(p));
+
+    if (p.isMe) {
+      const badge = document.createElement('span');
+      badge.className = 'me-badge';
+      badge.textContent = 'вы';
+      card.appendChild(badge);
+    }
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.textContent = p.name.charAt(0).toUpperCase();
+    card.appendChild(avatar);
+
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = p.name;
+    card.appendChild(name);
+
+    const t = tagFor(p);
+    if (t) {
+      const tag = document.createElement('span');
+      tag.className = 'tag ' + t.cls;
+      tag.textContent = t.text;
+      card.appendChild(tag);
+    }
+
+    grid.appendChild(card);
+  });
+}
+
+/* =====================================================
+   События интерфейса
+   ===================================================== */
+document.getElementById('btn-main').addEventListener('click', onMain);
+document.getElementById('btn-reset').addEventListener('click', () => { haptic('light'); resetGame(); });
+document.getElementById('btn-log').addEventListener('click', () => {
+  document.getElementById('overlay').classList.add('active');
+  const box = document.getElementById('log');
+  box.scrollTop = box.scrollHeight;
+});
+document.getElementById('btn-close').addEventListener('click', () => {
+  document.getElementById('overlay').classList.remove('active');
+});
+
+render();
+</script>
+</body>
+</html>
