@@ -74,7 +74,7 @@ function sameString(a, b) {
   for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
   return r === 0;
 }
-// Возвращает { uid, name } или null, если подпись неверная или устарела.
+// Возвращает { uid, name, avatar } или null при неверной или устаревшей подписи.
 async function validateInitData(initData, botToken) {
   try {
     if (!initData || !botToken) return null;
@@ -95,7 +95,8 @@ async function validateInitData(initData, botToken) {
     if (!(age > -300 && age < INITDATA_MAX_AGE_S)) return null;
     const user = JSON.parse(params.get('user'));
     if (!user || typeof user.id !== 'number') return null;
-    return { uid: 'tg' + user.id, name: cleanName(user.first_name || user.username) };
+    const avatar = typeof user.photo_url === 'string' && user.photo_url.startsWith('https://') && user.photo_url.length < 500 ? user.photo_url : null;
+    return { uid: 'tg' + user.id, name: cleanName(user.first_name || user.username), avatar: avatar };
   } catch (e) {
     return null;
   }
@@ -103,7 +104,7 @@ async function validateInitData(initData, botToken) {
 
 // ---------------------------------------------------------------------------
 // 3. Комната: правила игры
-//    Игрок: { uid (секретный id), id (публичный номер места), name, role, alive, bot, conn }
+//    Игрок: { uid (секретный id), id (публичный номер места), name, avatar, role, alive, bot, conn }
 //    conn = { send(string), close() } или null, если человек не в сети
 // ---------------------------------------------------------------------------
 class Room {
@@ -153,15 +154,17 @@ class Room {
   }
 
   // --- подключение ---
-  join(uid, name, conn) {
+  join(uid, name, conn, avatar) {
     let p = this.byUid(uid);
     if (p) {
       if (p.conn && p.conn !== conn) p.conn.close();
       p.conn = conn;
+      p.name = name;
+      p.avatar = avatar || null;
     } else {
       if (this.phase !== 'lobby') return { ok: false, error: 'Игра уже идёт. Присоединиться можно только в лобби.' };
       if (this.humans().length >= MAX_PLAYERS) return { ok: false, error: 'Комната заполнена.' };
-      p = { uid: uid, id: 'p' + (++this.seq), name: name, role: null, alive: true, bot: false, conn: conn };
+      p = { uid: uid, id: 'p' + (++this.seq), name: name, avatar: avatar || null, role: null, alive: true, bot: false, conn: conn };
       this.players.push(p);
       if (!this.hostId) this.hostId = p.id;
     }
@@ -203,7 +206,7 @@ class Room {
     const names = shuffle(BOT_NAMES);
     let n = 0;
     while (this.players.length < MAX_PLAYERS) {
-      this.players.push({ uid: null, id: 'b' + (++n), name: names[n - 1], role: null, alive: true, bot: true, conn: null });
+      this.players.push({ uid: null, id: 'b' + (++n), name: names[n - 1], avatar: null, role: null, alive: true, bot: true, conn: null });
     }
     const roles = shuffle(ROLE_SET);
     this.players = shuffle(this.players);
@@ -403,6 +406,7 @@ class Room {
       players: this.players.map((q) => ({
         id: q.id,
         name: q.name,
+        avatar: q.bot ? null : (q.avatar || null),
         alive: q.alive,
         bot: q.bot,
         online: q.bot || !!q.conn,
@@ -456,7 +460,7 @@ export class GameRoom {
 
       let user = await validateInitData(m.initData, env.BOT_TOKEN);
       if (!user && env.ALLOW_GUESTS === '1' && /^[a-z0-9]{8,32}$/.test(String(m.guestId || ''))) {
-        user = { uid: 'g' + m.guestId, name: cleanName(m.name) };
+        user = { uid: 'g' + m.guestId, name: cleanName(m.name), avatar: null };
       }
       if (!user) {
         say({ t: 'error', fatal: true, msg: env.BOT_TOKEN ? 'Не удалось проверить данные Telegram. Откройте игру через бота.' : 'Сервер не настроен: нет BOT_TOKEN.' });
@@ -467,7 +471,7 @@ export class GameRoom {
         send: (s) => { try { ws.send(s); } catch (e) {} },
         close: () => { try { ws.close(1000, 'replaced'); } catch (e) {} }
       };
-      const r = room.join(user.uid, user.name, c);
+      const r = room.join(user.uid, user.name, c, user.avatar);
       if (!r.ok) {
         say({ t: 'error', fatal: true, msg: r.error });
         try { ws.close(1000, 'refused'); } catch (e) {}
@@ -486,7 +490,10 @@ export class GameRoom {
 // 5. Telegram-бот
 // ---------------------------------------------------------------------------
 async function tgApi(env, method, body) {
-  const r = await fetch('https://api.telegram.org/bot' + env.BOT_TOKEN + '/' + method, {
+  const apiUrl = env.TELEGRAM_TEST === '1'
+    ? 'https://api.telegram.org/bot' + env.BOT_TOKEN + '/test/' + method
+    : 'https://api.telegram.org/bot' + env.BOT_TOKEN + '/' + method;
+  const r = await fetch(apiUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body)
@@ -504,8 +511,24 @@ async function handleWebhook(request, env) {
   }
   let update;
   try { update = await request.json(); } catch (e) { return new Response('ok'); }
+  if (update && update.pre_checkout_query) {
+    const query = update.pre_checkout_query;
+    const valid = query.invoice_payload === 'donate' && query.currency === 'XTR' && [50, 100, 250].includes(query.total_amount);
+    try {
+      await tgApi(env, 'answerPreCheckoutQuery', valid
+        ? { pre_checkout_query_id: query.id, ok: true }
+        : { pre_checkout_query_id: query.id, ok: false, error_message: 'Этот счёт недействителен.' });
+    } catch (e) { console.error('pre-checkout error', e && e.stack || e); }
+    return new Response('ok');
+  }
   const msg = update && update.message;
-  if (!msg || typeof msg.text !== 'string' || !msg.chat) return new Response('ok');
+  if (!msg || !msg.chat) return new Response('ok');
+  if (msg.successful_payment && msg.successful_payment.currency === 'XTR' && msg.successful_payment.invoice_payload === 'donate') {
+    try { await tgApi(env, 'sendMessage', { chat_id: msg.chat.id, text: '💛 Спасибо за поддержку игры «Мафия»!' }); }
+    catch (e) { console.error('payment receipt error', e && e.stack || e); }
+    return new Response('ok');
+  }
+  if (typeof msg.text !== 'string') return new Response('ok');
 
   const origin = env.PUBLIC_URL || new URL(request.url).origin;
   const cmd = msg.text.trim().split(/[\s@]/)[0].toLowerCase();
@@ -545,13 +568,44 @@ async function handleSetup(env, url) {
   if (!env.BOT_TOKEN) return new Response('Нет секрета BOT_TOKEN. Выполните: npx wrangler secret put BOT_TOKEN', { status: 500 });
   const origin = env.PUBLIC_URL || url.origin;
   const out = {};
-  out.webhook = await tgApi(env, 'setWebhook', { url: origin + '/telegram/webhook', secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message'] });
+  out.webhook = await tgApi(env, 'setWebhook', { url: origin + '/telegram/webhook', secret_token: env.WEBHOOK_SECRET, allowed_updates: ['message', 'pre_checkout_query'] });
   out.commands = await tgApi(env, 'setMyCommands', { commands: [
     { command: 'play', description: 'Открыть игру' },
     { command: 'newgame', description: 'Создать комнату и позвать друзей' }
   ] });
   out.menuButton = await tgApi(env, 'setChatMenuButton', { menu_button: { type: 'web_app', text: 'Играть', web_app: { url: origin } } });
   return new Response(JSON.stringify(out, null, 2), { headers: { 'content-type': 'application/json; charset=utf-8' } });
+}
+
+// ---------------------------------------------------------------------------
+// Создание ссылки на добровольный донат через Telegram Stars
+// ---------------------------------------------------------------------------
+async function handleDonate(request, env) {
+  if (request.method !== 'POST') return new Response(JSON.stringify({ error: 'Метод не поддерживается.' }), { status: 405, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  if (!env.BOT_TOKEN) return new Response(JSON.stringify({ error: 'Сервер не настроен.' }), { status: 500, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  let body;
+  try { body = await request.json(); } catch (e) { return new Response(JSON.stringify({ error: 'Некорректный запрос.' }), { status: 400, headers: { 'content-type': 'application/json; charset=utf-8' } }); }
+  const user = await validateInitData(body && body.initData, env.BOT_TOKEN);
+  if (!user) return new Response(JSON.stringify({ error: 'Не удалось подтвердить Telegram-аккаунт. Открой игру через бота.' }), { status: 401, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  const amount = [50, 100, 250].includes(Number(body.amount)) ? Number(body.amount) : 100;
+  try {
+    const invoice = await tgApi(env, 'createInvoiceLink', {
+      title: 'Поддержать игру',
+      description: 'Добровольная поддержка разработки игры «Мафия». Донат не даёт игровых преимуществ.',
+      payload: 'donate',
+      currency: 'XTR',
+      provider_token: '',
+      prices: [{ label: 'Поддержать игру', amount: amount }]
+    });
+    if (!invoice || !invoice.ok || typeof invoice.result !== 'string') {
+      console.error('createInvoiceLink error', invoice && invoice.description || 'unknown');
+      return new Response(JSON.stringify({ error: 'Telegram не смог создать счёт. Попробуй позже.' }), { status: 502, headers: { 'content-type': 'application/json; charset=utf-8' } });
+    }
+    return new Response(JSON.stringify({ url: invoice.result, amount: amount }), { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' } });
+  } catch (e) {
+    console.error('donate error', e && e.stack || e);
+    return new Response(JSON.stringify({ error: 'Не удалось создать счёт.' }), { status: 502, headers: { 'content-type': 'application/json; charset=utf-8' } });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -568,6 +622,7 @@ export default {
       return env.ROOMS.get(env.ROOMS.idFromName(code)).fetch(request);
     }
     if (url.pathname === '/telegram/webhook' && request.method === 'POST') return handleWebhook(request, env);
+    if (url.pathname === '/api/donate') return handleDonate(request, env);
     if (url.pathname === '/setup') return handleSetup(env, url);
     if (url.pathname === '/' || url.pathname === '/index.html') {
       const cfg = JSON.stringify({ bot: env.BOT_USERNAME || '', app: env.APP_SHORT_NAME || '' }).replace(/</g, '\\u003c');
@@ -682,6 +737,44 @@ const HTML = String.raw`<!DOCTYPE html>
   }
   .toast.show { opacity: 1; }
   .big { font-size: 28px; font-weight: 800; letter-spacing: 4px; color: #ffd700; text-align: center; margin: 4px 0 8px; }
+
+  /* Премиальная стеклянная тема и мягкие интерактивные состояния */
+  body { background: radial-gradient(ellipse at 15% 0%, #28345a 0%, #111827 48%, #090d18 100%); transition: background 0.7s ease; }
+  body.night { background: radial-gradient(ellipse at 15% 0%, #20294b 0%, #101525 48%, #070a12 100%); }
+  body.day { background: radial-gradient(ellipse at 85% 0%, #536d9b 0%, #263a5d 48%, #142139 100%); }
+  .header { background: rgba(9,13,25,.68); border-bottom: 1px solid rgba(244,198,91,.55); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); box-shadow: 0 8px 30px rgba(0,0,0,.22); }
+  .title { color: #f6d889; text-shadow: 0 0 24px rgba(246,216,137,.22); letter-spacing: 2px; }
+  .phase { background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.12); box-shadow: inset 0 1px rgba(255,255,255,.08); }
+  .box { background: rgba(17,24,39,.58); border: 1px solid rgba(255,255,255,.11); border-radius: 18px; box-shadow: 0 14px 36px rgba(0,0,0,.19), inset 0 1px rgba(255,255,255,.045); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); }
+  .box h2 { color: #f4d58b; }
+  .input { background: rgba(255,255,255,.075); border-color: rgba(255,255,255,.16); border-radius: 12px; }
+  .input:focus { outline: none; border-color: rgba(244,213,139,.75); box-shadow: 0 0 0 3px rgba(244,213,139,.12); }
+  .card { min-width: 0; background: linear-gradient(155deg, rgba(31,41,62,.86), rgba(12,18,31,.8)); border: 1px solid rgba(255,255,255,.1); border-radius: 17px; padding: 12px 5px 10px; box-shadow: 0 8px 20px rgba(0,0,0,.16), inset 0 1px rgba(255,255,255,.045); transition: transform .2s ease, border-color .2s ease, box-shadow .2s ease, opacity .2s ease; }
+  .card.selectable { border-color: rgba(255,255,255,.2); }
+  .card.selectable:active { transform: scale(.96); }
+  .card.selected { border-color: #f3d17d; transform: translateY(-2px); box-shadow: 0 0 0 1px rgba(243,209,125,.24), 0 0 25px rgba(243,209,125,.22); }
+  .card.me { border-color: rgba(132,158,255,.65); }
+  .avatar { width: 48px; height: 48px; margin-bottom: 8px; border: 2px solid rgba(255,255,255,.24); box-shadow: 0 4px 14px rgba(0,0,0,.3), 0 0 0 3px rgba(255,255,255,.035); overflow: hidden; }
+  .avatar img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+  .avatar.photo { border-color: rgba(246,216,137,.75); box-shadow: 0 0 0 3px rgba(246,216,137,.1), 0 5px 18px rgba(0,0,0,.35); }
+  .name { font-size: 12px; letter-spacing: .1px; }
+  .tag { background: rgba(246,216,137,.13); color: #f6d889; border: 1px solid rgba(246,216,137,.12); }
+  .badge { top: 5px; right: 5px; background: rgba(99,126,226,.9); border: 1px solid rgba(255,255,255,.14); }
+  .badge.bot { background: rgba(110,120,140,.75); }
+  .online-dot { position: absolute; width: 9px; height: 9px; top: 7px; left: 7px; border-radius: 50%; background: #52d69a; border: 2px solid #172033; box-shadow: 0 0 9px rgba(82,214,154,.65); }
+  .card.offline .online-dot { background: #f07878; box-shadow: 0 0 8px rgba(240,120,120,.45); }
+  .panel { background: rgba(8,12,23,.86); border-top: 1px solid rgba(151,169,255,.35); box-shadow: 0 -12px 36px rgba(0,0,0,.25); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
+  .status { color: #e2e7f4; }
+  .last { color: #a9d9c0; }
+  .btn { min-height: 48px; border-radius: 13px; background: linear-gradient(135deg, #647be0, #7654a8); box-shadow: 0 6px 16px rgba(57,66,133,.22), inset 0 1px rgba(255,255,255,.18); transition: transform .16s ease, filter .16s ease, box-shadow .16s ease; }
+  .btn.primary { background: linear-gradient(135deg, #279b76, #37b987); }
+  .btn.danger { background: linear-gradient(135deg, #c95b60, #a83d4a); }
+  .btn:active { transform: scale(.97); filter: brightness(1.12); }
+  .modal { background: rgba(19,27,44,.96); border: 1px solid rgba(151,169,255,.45); box-shadow: 0 24px 70px rgba(0,0,0,.48); }
+  .toast { background: rgba(13,19,32,.94); border-color: rgba(246,216,137,.65); box-shadow: 0 12px 34px rgba(0,0,0,.35); backdrop-filter: blur(16px); }
+  .big { color: #f6d889; text-shadow: 0 0 24px rgba(246,216,137,.2); }
+  @media (max-width: 520px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; } .card { padding: 13px 5px 11px; } .buttons { gap: 6px; flex-wrap: wrap; } .buttons .btn { flex: 1 1 28%; font-size: 12px; padding: 0 6px; } }
+  @media (min-width: 521px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; } }
 </style>
 </head>
 <body>
@@ -697,6 +790,7 @@ const HTML = String.raw`<!DOCTYPE html>
       <h2>Играйте с друзьями</h2>
       За столом 8 игроков. Роли раздаются случайно: 2 мафии, доктор, шериф и 4 мирных. Свободные места займут боты.
       <div class="row"><button class="btn primary" id="btn-create">Создать комнату</button></div>
+      <div class="row"><button class="btn" id="btn-donate-menu">💛 Поддержать игру</button></div>
       <div class="row">
         <input class="input" id="code-input" maxlength="12" placeholder="Код комнаты" autocomplete="off" autocapitalize="characters">
         <button class="btn" id="btn-join">Войти</button>
@@ -738,6 +832,7 @@ const HTML = String.raw`<!DOCTYPE html>
   <div class="buttons">
     <button class="btn primary" id="btn-main" style="display:none"></button>
     <button class="btn" id="btn-invite" style="display:none">Пригласить</button>
+    <button class="btn" id="btn-donate-room">💛 Донат</button>
     <button class="btn" id="btn-log">Журнал</button>
     <button class="btn danger" id="btn-leave">Выйти</button>
   </div>
@@ -938,6 +1033,14 @@ const HTML = String.raw`<!DOCTYPE html>
     return (S.phase === 'night' ? '🌙 Ночь №' : '☀️ День №') + S.round;
   }
 
+  // Подбирает стабильный оттенок буквенной аватарки по имени игрока
+  function botColor(name) {
+    var hash = 0;
+    for (var i = 0; i < name.length; i++) hash = ((hash << 5) - hash + name.charCodeAt(i)) | 0;
+    var hue = Math.abs(hash) % 360;
+    return 'linear-gradient(135deg, hsl(' + hue + ', 62%, 54%), hsl(' + ((hue + 42) % 360) + ', 58%, 36%))';
+  }
+
   function render() {
     var inRoom = !!S;
     $('menu').style.display = inRoom ? 'none' : 'block';
@@ -988,9 +1091,23 @@ const HTML = String.raw`<!DOCTYPE html>
         badge.textContent = q.id === S.me ? 'вы' : (q.bot ? 'бот' : 'нет связи');
         card.appendChild(badge);
       }
+      var dot = document.createElement('span');
+      dot.className = 'online-dot';
+      card.appendChild(dot);
       var av = document.createElement('div');
       av.className = 'avatar';
-      av.textContent = q.name.charAt(0).toUpperCase();
+      if (q.avatar && !q.bot) {
+        av.className += ' photo';
+        var photo = document.createElement('img');
+        photo.src = q.avatar;
+        photo.alt = '';
+        photo.referrerPolicy = 'no-referrer';
+        photo.onerror = function () { av.className = 'avatar'; av.textContent = q.name.charAt(0).toUpperCase(); };
+        av.appendChild(photo);
+      } else {
+        av.style.background = botColor(q.name);
+        av.textContent = q.name.charAt(0).toUpperCase();
+      }
       card.appendChild(av);
       var nm = document.createElement('div');
       nm.className = 'name';
@@ -1014,6 +1131,28 @@ const HTML = String.raw`<!DOCTYPE html>
   }
   setInterval(tick, 500);
   setInterval(function () { if (S) send({ t: 'ping' }); }, 25000);
+
+  // Создаёт защищённый счёт Stars и открывает его штатным окном Telegram
+  function donate() {
+    if (!tg || !tg.initData || !tg.openInvoice) { toast('Донаты доступны при открытии игры через Telegram.'); return; }
+    var amount = 100;
+    if (tg.showPopup) {
+      tg.showPopup({ title: 'Поддержать игру', message: 'Выбери сумму добровольного доната в Telegram Stars.', buttons: [
+        { id: '50', text: '⭐ 50' }, { id: '100', text: '⭐ 100' }, { id: '250', text: '⭐ 250' }
+      ] }, function (id) { if (id && id !== 'cancel') createDonateInvoice(Number(id)); });
+    } else createDonateInvoice(amount);
+  }
+  function createDonateInvoice(amount) {
+    fetch('/api/donate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ initData: tg.initData, amount: amount }) })
+      .then(function (r) { return r.json().then(function (data) { if (!r.ok) throw new Error(data.error || 'Не удалось создать счёт.'); return data; }); })
+      .then(function (data) {
+        tg.openInvoice(data.url, function (status) {
+          if (status === 'paid') { toast('💛 Спасибо за поддержку игры!'); haptic('medium'); }
+          else if (status === 'failed') toast('Платёж не прошёл. Попробуй ещё раз.');
+        });
+      })
+      .catch(function (e) { toast(e.message || 'Ошибка при создании счёта.'); });
+  }
 
   // --- действия ---
   function invite() {
@@ -1040,6 +1179,8 @@ const HTML = String.raw`<!DOCTYPE html>
     send({ t: S.phase === 'over' ? 'again' : 'start' });
   });
   $('btn-invite').addEventListener('click', invite);
+  $('btn-donate-menu').addEventListener('click', function () { haptic('light'); donate(); });
+  $('btn-donate-room').addEventListener('click', function () { haptic('light'); donate(); });
   $('btn-leave').addEventListener('click', function () { haptic('light'); leaveRoom(); });
   $('btn-log').addEventListener('click', function () {
     var box = $('log');
